@@ -26,13 +26,19 @@ bw_options = list(temp_radio.bwToTones.keys())
 default_bw_idx = bw_options.index(140) if 140 in bw_options else 0
 ch_bw = st.sidebar.selectbox("Channel BW (MHz)", bw_options, index=default_bw_idx)
 
+# --- NEW: Tx Antenna Elements & Max MCS ---
 st.sidebar.markdown("---")
-st.sidebar.header("Table Parameters")
+st.sidebar.header("Advanced Capabilities")
+tx_elements = st.sidebar.number_input("Tx Antenna Elements", min_value=1, max_value=128, value=32, step=1)
+max_mcs = st.sidebar.slider("Maximum MCS limit", min_value=0, max_value=13, value=10, step=1)
+
+st.sidebar.markdown("---")
+st.sidebar.header("Distance Table Parameters")
 target_availability = st.sidebar.number_input("Target Availability (%)", value=99.9, step=0.01)
 
 # Constants from original script
-GantTx = 5 + 10 * np.log10(32)  # phase array of 32 elements
-GantRx = 5 + 10 * np.log10(32)
+GantTx = 5 + 10 * np.log10(tx_elements)  # Dynamically calculated based on user input
+GantRx = 5 + 10 * np.log10(32)           # Keeping Rx at 32 as per original script
 tx_power = 14 + 10 * np.log10(8)
 noise_figure = 7
 
@@ -48,13 +54,12 @@ radio1.noiseFigure = noise_figure
 
 link1 = pl.Link(frequency=frequency, rainZone=rain_zone)
 
-# Changed initialization to 0 instead of -1 so graph doesn't drop below 0
 results = np.zeros((len(availabilities), len(distanceRange)))
 
 with st.spinner("Calculating graph data..."):
     for indAvl, avl in enumerate(availabilities):
         for indDistance, distance in enumerate(distanceRange):
-            for mcs in range(14):  # Iterating up to 13 (all MCS)
+            for mcs in range(max_mcs + 1):  # Respects the Max MCS limit
                 radio1.mcs = mcs
                 link1.distance = distance
                 link1.availability = avl
@@ -63,7 +68,6 @@ with st.spinner("Calculating graph data..."):
                 rsl = radio1.txPower + GantTx - pathLoss + GantRx
                 
                 if rsl - radio1.thresholdRsl() >= 2:
-                    # Capture the highest capacity capable at this distance
                     results[indAvl][indDistance] = max(results[indAvl][indDistance], radio1.capacity())
 
 # Plotting the Graph
@@ -77,16 +81,15 @@ ax.grid(True)
 ax.legend(title="Availability")
 ax.set_xlabel("Distance (Km)")
 ax.set_ylabel("User Capacity [Mbps] (Two Streams)")
-ax.set_title(f"{frequency}GHz, Rain Zone {rain_zone}, {ch_bw}MHz BW")
+ax.set_title(f"{frequency}GHz, Rain Zone {rain_zone}, {ch_bw}MHz BW, Max MCS {max_mcs}")
 
 st.pyplot(fig)
 
 
-# --- TABLE: Max Distance per MCS for all BWs ---
+# --- TABLE 1: Max Distance per MCS for all BWs ---
 st.header(f"Maximum Distance (Km) at {target_availability}% Availability")
 
 def find_max_distance(mcs_val, bw_val, freq_val, rz_val, avail_val):
-    """Uses Binary Search to quickly find the maximum reachable distance"""
     rad = wifi.wifi7Radio(chBW=bw_val)
     rad.mcs = mcs_val
     rad.txPower = tx_power
@@ -95,11 +98,10 @@ def find_max_distance(mcs_val, bw_val, freq_val, rz_val, avail_val):
     lnk = pl.Link(frequency=freq_val, rainZone=rz_val)
     lnk.availability = avail_val
     
-    # Binary search boundaries (Km)
+    # Binary search boundaries
     min_d, max_d = 0.001, 10.0
     best_d = 0
     
-    # 20 iterations gives ~0.00001 km precision
     for _ in range(20):
         mid_d = (min_d + max_d) / 2
         lnk.distance = mid_d
@@ -109,22 +111,37 @@ def find_max_distance(mcs_val, bw_val, freq_val, rz_val, avail_val):
         
         if rsl - rad.thresholdRsl() >= 2:
             best_d = mid_d
-            min_d = mid_d  # We can go further
+            min_d = mid_d
         else:
-            max_d = mid_d  # Too far
+            max_d = mid_d
             
     return round(best_d, 2)
 
 with st.spinner("Calculating distances for all Channel Bandwidths..."):
-    table_data = []
-    # MCS indexes from 0 to 13
-    for mcs in range(14):
+    dist_table_data = []
+    for mcs in range(max_mcs + 1): # Respects the Max MCS limit
         row = {"MCS": mcs}
         for bw in bw_options:
             row[f"{bw} MHz"] = find_max_distance(mcs, bw, frequency, rain_zone, target_availability)
-        table_data.append(row)
+        dist_table_data.append(row)
 
-df_table = pd.DataFrame(table_data)
+df_dist_table = pd.DataFrame(dist_table_data)
+st.dataframe(df_dist_table, use_container_width=True, hide_index=True)
 
-# Display Table
-st.dataframe(df_table, use_container_width=True, hide_index=True)
+
+# --- TABLE 2: Capacity per MCS and BW ---
+st.header("Physical Capacity per MCS and Bandwidth (Mbps)")
+
+with st.spinner("Calculating capacity matrix..."):
+    cap_table_data = []
+    for mcs in range(max_mcs + 1):  # Respects the Max MCS limit
+        row = {"MCS": mcs}
+        for bw in bw_options:
+            temp_rad = wifi.wifi7Radio(chBW=bw)
+            temp_rad.mcs = mcs
+            # Rounding to 2 decimal places for cleaner display
+            row[f"{bw} MHz"] = round(temp_rad.capacity(), 2) 
+        cap_table_data.append(row)
+
+df_cap_table = pd.DataFrame(cap_table_data)
+st.dataframe(df_cap_table, use_container_width=True, hide_index=True)
