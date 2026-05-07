@@ -32,6 +32,13 @@ st.sidebar.header("Advanced Capabilities")
 tx_elements = st.sidebar.number_input("Tx Antenna Elements", min_value=1, max_value=128, value=32, step=1)
 max_mcs = st.sidebar.slider("Maximum MCS limit", min_value=0, max_value=13, value=10, step=1)
 
+# --- NEW: Throughput Parameters ---
+st.sidebar.markdown("---")
+st.sidebar.header("Throughput Parameters")
+num_streams = st.sidebar.number_input("Number of Streams", min_value=1, max_value=16, value=2, step=1)
+overhead_percent = st.sidebar.slider("MAC Efficiency / Overhead (%)", min_value=10, max_value=100, value=75, step=1)
+overhead_factor = overhead_percent / 100.0
+
 st.sidebar.markdown("---")
 st.sidebar.header("Distance Table Parameters")
 target_availability = st.sidebar.number_input("Target Availability (%)", value=99.9, step=0.01)
@@ -73,14 +80,14 @@ with st.spinner("Calculating graph data..."):
 # Plotting the Graph
 fig, ax = plt.subplots(figsize=(10, 5))
 for indAvl, avl in enumerate(availabilities):
-    # Two stream user throughput
-    user_capacity = (results[indAvl] * 2 * 0.75) / 1.0 
+    # User throughput based on user-defined streams and overhead
+    user_capacity = results[indAvl] * num_streams * overhead_factor
     ax.plot(distanceRange, user_capacity, label=f"{avl}%")
 
 ax.grid(True)
 ax.legend(title="Availability")
 ax.set_xlabel("Distance (Km)")
-ax.set_ylabel("User Capacity [Mbps] (Two Streams)")
+ax.set_ylabel(f"User Capacity [Mbps] ({num_streams} Streams)")
 ax.set_title(f"{frequency}GHz, Rain Zone {rain_zone}, {ch_bw}MHz BW, Max MCS {max_mcs}")
 
 st.pyplot(fig)
@@ -130,7 +137,7 @@ st.dataframe(df_dist_table, use_container_width=True, hide_index=True)
 
 
 # --- TABLE 2: Capacity per MCS and BW ---
-st.header("Physical Capacity per MCS and Bandwidth (Mbps)")
+st.header(f"User Capacity per MCS and Bandwidth (Mbps) - {num_streams} Streams, {overhead_percent}% Efficiency")
 
 with st.spinner("Calculating capacity matrix..."):
     cap_table_data = []
@@ -139,8 +146,14 @@ with st.spinner("Calculating capacity matrix..."):
         for bw in bw_options:
             temp_rad = wifi.wifi7Radio(chBW=bw)
             temp_rad.mcs = mcs
+            
+            # Math: physical rate x number of streams x overhead percentage
+            raw_phy_rate = temp_rad.capacity()
+            user_throughput = raw_phy_rate * num_streams * overhead_factor
+            
             # Rounding to 2 decimal places for cleaner display
-            row[f"{bw} MHz"] = round(temp_rad.capacity(), 2) 
+            row[f"{bw} MHz"] = round(user_throughput, 2) 
+            
         cap_table_data.append(row)
 
 df_cap_table = pd.DataFrame(cap_table_data)
